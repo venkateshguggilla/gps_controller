@@ -40,9 +40,9 @@ class MockLocationEngine(context: Context) {
         runCatching { fused.setMockMode(true) }
     }
 
-    fun push(lat: Double, lng: Double) {
-        for (p in providers) lm.setTestProviderLocation(p, build(p, lat, lng))
-        runCatching { fused.setMockLocation(build("fused", lat, lng)) }
+    fun push(lat: Double, lng: Double, speedMs: Float = 0f, bearingDeg: Float = 0f) {
+        for (p in providers) lm.setTestProviderLocation(p, build(p, lat, lng, speedMs, bearingDeg))
+        runCatching { fused.setMockLocation(build("fused", lat, lng, speedMs, bearingDeg)) }
     }
 
     fun stop() {
@@ -50,13 +50,13 @@ class MockLocationEngine(context: Context) {
         runCatching { fused.setMockMode(false) }
     }
 
-    private fun build(provider: String, lat: Double, lng: Double) = Location(provider).apply {
+    private fun build(provider: String, lat: Double, lng: Double, speedMs: Float, bearingDeg: Float) = Location(provider).apply {
         latitude = lat
         longitude = lng
         altitude = 0.0
         accuracy = 3f
-        speed = 0f
-        bearing = 0f
+        speed = speedMs
+        bearing = bearingDeg
         verticalAccuracyMeters = 3f
         speedAccuracyMetersPerSecond = 0.1f
         bearingAccuracyDegrees = 0.1f

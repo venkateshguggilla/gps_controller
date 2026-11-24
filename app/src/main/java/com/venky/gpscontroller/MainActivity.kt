@@ -5,7 +5,11 @@ import android.app.AppOpsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Point
 import android.location.Geocoder
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Process
@@ -17,6 +21,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +32,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.AlertDialog
@@ -34,6 +40,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.InputChip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -49,6 +56,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -75,9 +83,13 @@ import org.osmdroid.events.MapEventsReceiver
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
+import org.osmdroid.views.Projection
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.Overlay
 import java.util.Locale
+
+private val SPEEDS = listOf("Walk" to 5.0, "Cycle" to 15.0, "Drive" to 40.0, "Fast" to 100.0)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -85,7 +97,7 @@ class MainActivity : ComponentActivity() {
         Configuration.getInstance().apply {
             load(applicationContext, getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
             // The tile server requires a user agent; keep it generic.
-            userAgentValue = "GpsController/0.1"
+            userAgentValue = "GpsController/0.2"
         }
         if (MockState.target.value == null) MockState.target.value = Prefs(this).lastTarget()
         enableEdgeToEdge()
@@ -112,19 +124,39 @@ private fun GpsControllerScreen() {
     val running by MockState.running.collectAsStateWithLifecycle()
     val target by MockState.target.collectAsStateWithLifecycle()
     val error by MockState.error.collectAsStateWithLifecycle()
+    val route by MockState.route.collectAsStateWithLifecycle()
+    val routeActive by MockState.routeActive.collectAsStateWithLifecycle()
+    val speedKmh by MockState.speedKmh.collectAsStateWithLifecycle()
+    val loop by MockState.loop.collectAsStateWithLifecycle()
+    val joystick by MockState.joystick.collectAsStateWithLifecycle()
 
     var favorites by remember { mutableStateOf(store.favorites()) }
     var isMockApp by remember { mutableStateOf(isMockLocationApp(context)) }
     var query by rememberSaveable { mutableStateOf("") }
     var message by remember { mutableStateOf<String?>(null) }
     var showSaveDialog by remember { mutableStateOf(false) }
+    var routeMode by rememberSaveable { mutableStateOf(false) }
+    // Bumped whenever the map should jump to the current position.
+    var centerKey by remember { mutableIntStateOf(0) }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { isMockApp = isMockLocationApp(context) }
 
-    fun select(t: Target) {
+    /** Jumps the fake position to [t]; this also abandons a route in progress. */
+    fun select(t: Target, center: Boolean = true) {
         message = null
+        MockState.routeActive.value = false
         MockState.target.value = t
         store.saveLastTarget(t)
+        if (center) centerKey++
+    }
+
+    fun beginRoute() {
+        val points = MockState.route.value
+        if (points.size < 2) return
+        MockState.target.value = points[0]
+        MockState.routeNext = 1
+        MockState.routeActive.value = true
+        centerKey++
     }
 
     val permissionLauncher = rememberLauncherForActivityResult(
@@ -140,6 +172,7 @@ private fun GpsControllerScreen() {
     fun start() {
         message = null
         MockState.error.value = null
+        if (routeMode) beginRoute()
         if (hasLocationPermission(context)) {
             MockLocationService.start(context)
         } else {
@@ -152,6 +185,27 @@ private fun GpsControllerScreen() {
             }
             permissionLauncher.launch(wanted.toTypedArray())
         }
+    }
+
+    fun toggleJoystick() {
+        if (joystick) {
+            MockState.joystick.value = false
+            return
+        }
+        if (!Settings.canDrawOverlays(context)) {
+            message = "Allow \"Display over other apps\" for GPS Controller, then turn Joystick on again."
+            runCatching {
+                context.startActivity(
+                    Intent(
+                        Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                        Uri.parse("package:${context.packageName}"),
+                    )
+                )
+            }
+            return
+        }
+        MockState.joystick.value = true
+        message = if (running) null else "The joystick appears once the fake location is started."
     }
 
     fun search() {
@@ -189,7 +243,12 @@ private fun GpsControllerScreen() {
             Box(Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
                 MapPicker(
                     target = target,
-                    onPick = { select(it) },
+                    route = if (routeMode) route else emptyList(),
+                    centerKey = centerKey,
+                    onPick = {
+                        if (routeMode) MockState.route.value = MockState.route.value + it
+                        else select(it, center = false)
+                    },
                     modifier = Modifier.fillMaxSize(),
                 )
                 Text(
@@ -204,18 +263,89 @@ private fun GpsControllerScreen() {
             }
 
             Column(
-                Modifier.fillMaxWidth().padding(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 val t = target
+
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(
+                        selected = !routeMode,
+                        onClick = { routeMode = false },
+                        label = { Text("Single point") },
+                    )
+                    FilterChip(
+                        selected = routeMode,
+                        onClick = { routeMode = true },
+                        label = { Text("Route") },
+                    )
+                    FilterChip(
+                        selected = joystick,
+                        onClick = { toggleJoystick() },
+                        label = { Text("Joystick") },
+                    )
+                }
+
+                if (routeMode) {
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            if (route.isEmpty()) "Tap the map to add route points"
+                            else String.format(
+                                Locale.US, "%d points · %.2f km", route.size, Geo.length(route) / 1000
+                            )
+                        )
+                        TextButton(
+                            onClick = { MockState.route.value = route.dropLast(1) },
+                            enabled = route.isNotEmpty(),
+                        ) { Text("Undo") }
+                        TextButton(
+                            onClick = {
+                                MockState.routeActive.value = false
+                                MockState.route.value = emptyList()
+                            },
+                            enabled = route.isNotEmpty(),
+                        ) { Text("Clear") }
+                        FilterChip(
+                            selected = loop,
+                            onClick = { MockState.loop.value = !loop },
+                            label = { Text("Loop") },
+                        )
+                        if (running && !routeActive && route.size >= 2) {
+                            TextButton(onClick = { beginRoute() }) { Text("Run route") }
+                        }
+                    }
+                }
+
+                if (routeMode || joystick) {
+                    Row(
+                        Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        SPEEDS.forEach { (name, kmh) ->
+                            FilterChip(
+                                selected = speedKmh == kmh,
+                                onClick = { MockState.speedKmh.value = kmh },
+                                label = { Text("$name ${kmh.toInt()} km/h") },
+                            )
+                        }
+                    }
+                }
+
                 Text(
                     if (t != null) String.format(Locale.US, "%.6f, %.6f", t.lat, t.lng)
                     else "Tap the map to choose a location",
                     style = MaterialTheme.typography.titleMedium,
                 )
-                (error ?: message)?.let {
-                    Text(it, color = MaterialTheme.colorScheme.error)
-                }
+                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                message?.let { Text(it, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (running) {
                         Button(
@@ -229,9 +359,9 @@ private fun GpsControllerScreen() {
                     } else {
                         Button(
                             onClick = { start() },
-                            enabled = t != null && isMockApp,
+                            enabled = isMockApp && if (routeMode) route.size >= 2 else t != null,
                             modifier = Modifier.weight(1f),
-                        ) { Text("Start fake location") }
+                        ) { Text(if (routeMode) "Start route" else "Start fake location") }
                     }
                     OutlinedButton(onClick = { showSaveDialog = true }, enabled = t != null) {
                         Text("Save")
@@ -324,9 +454,16 @@ private fun SetupCard(onMessage: (String) -> Unit) {
 }
 
 @Composable
-private fun MapPicker(target: Target?, onPick: (Target) -> Unit, modifier: Modifier = Modifier) {
+private fun MapPicker(
+    target: Target?,
+    route: List<Target>,
+    centerKey: Int,
+    onPick: (Target) -> Unit,
+    modifier: Modifier = Modifier,
+) {
     val context = LocalContext.current
     val currentOnPick by rememberUpdatedState(onPick)
+    val currentTarget by rememberUpdatedState(target)
 
     val mapView = remember {
         MapView(context).apply {
@@ -337,6 +474,7 @@ private fun MapPicker(target: Target?, onPick: (Target) -> Unit, modifier: Modif
             controller.setCenter(GeoPoint(20.0, 78.0))
         }
     }
+    val routeOverlay = remember { RouteOverlay(context.resources.displayMetrics.density) }
     val marker = remember {
         Marker(mapView).apply {
             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
@@ -353,25 +491,72 @@ private fun MapPicker(target: Target?, onPick: (Target) -> Unit, modifier: Modif
 
             override fun longPressHelper(p: GeoPoint): Boolean = false
         })
-        mapView.overlays.add(0, taps)
+        mapView.overlays.add(taps)
+        mapView.overlays.add(routeOverlay)
         onDispose { mapView.onDetach() }
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { mapView.onResume() }
     LifecycleEventEffect(Lifecycle.Event.ON_PAUSE) { mapView.onPause() }
 
+    LaunchedEffect(route) {
+        routeOverlay.points = route.map { GeoPoint(it.lat, it.lng) }
+        mapView.invalidate()
+    }
+
+    // Keeps the marker on the position; follows it only when it moves off screen.
     LaunchedEffect(target) {
         if (target != null) {
             val point = GeoPoint(target.lat, target.lng)
             marker.position = point
             if (marker !in mapView.overlays) mapView.overlays.add(marker)
-            if (mapView.zoomLevelDouble < 10.0) mapView.controller.setZoom(15.0)
-            mapView.controller.animateTo(point)
+            if (mapView.width > 0 && !mapView.boundingBox.contains(point)) {
+                mapView.controller.setCenter(point)
+            }
             mapView.invalidate()
         }
     }
 
+    LaunchedEffect(centerKey) {
+        val t = currentTarget
+        if (t != null) {
+            if (mapView.zoomLevelDouble < 10.0) mapView.controller.setZoom(15.0)
+            mapView.controller.animateTo(GeoPoint(t.lat, t.lng))
+        }
+    }
+
     AndroidView(factory = { mapView }, modifier = modifier)
+}
+
+/** Draws the planned route as a line with a dot at each waypoint. */
+private class RouteOverlay(density: Float) : Overlay() {
+    var points: List<GeoPoint> = emptyList()
+
+    private val dotRadius = 5 * density
+    private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF1565C0.toInt()
+        strokeWidth = 4 * density
+        style = Paint.Style.STROKE
+    }
+    private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFD32F2F.toInt() }
+    private val prev = Point()
+    private val cur = Point()
+
+    override fun draw(canvas: Canvas, projection: Projection) {
+        for (i in points.indices) {
+            projection.toPixels(points[i], cur)
+            if (i > 0) {
+                canvas.drawLine(
+                    prev.x.toFloat(), prev.y.toFloat(), cur.x.toFloat(), cur.y.toFloat(), linePaint
+                )
+            }
+            prev.set(cur.x, cur.y)
+        }
+        for (p in points) {
+            projection.toPixels(p, cur)
+            canvas.drawCircle(cur.x.toFloat(), cur.y.toFloat(), dotRadius, dotPaint)
+        }
+    }
 }
 
 private fun isMockLocationApp(context: Context): Boolean {
