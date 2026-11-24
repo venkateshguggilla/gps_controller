@@ -1,0 +1,59 @@
+# GPS Controller
+
+An Android app that sets a fake GPS location for the whole phone. Pick a point on the map, press Start, and other apps see that point as the phone's current location.
+
+It needs no root. It uses Android's official mock location feature, so it must be chosen as the mock location app in Developer options.
+
+## Features
+
+- Pick a location by tapping the map, typing coordinates (`12.9716, 77.5946`) or searching a place name.
+- Start and stop the fake location; it keeps running in the background with a notification.
+- Save named locations and switch between them with one tap.
+- Feeds the GPS, network and Google fused location providers, so most apps pick it up.
+
+## Install
+
+Requires Android 8.0 (API 26) or newer.
+
+1. Download [`apk/GpsController-0.1-debug.apk`](apk/GpsController-0.1-debug.apk) to your phone.
+2. Open the file and allow installing from this source when Android asks.
+
+## One-time setup
+
+1. Turn on Developer options: **Settings > About phone**, then tap **Build number** 7 times.
+2. Open **Settings > System > Developer options**.
+3. Tap **Select mock location app** and choose **GPS Controller**.
+
+The app shows a setup card with a shortcut to Developer options until this is done.
+
+## Use
+
+1. Open GPS Controller.
+2. Tap the map, or search for a place or coordinates, to drop the pin.
+3. Press **Start fake location** and allow the location and notification permissions.
+4. Open any other app; it now sees the pinned location.
+5. Press **Stop fake location** (in the app or on the notification) to return to your real location.
+
+## Limits
+
+- Apps can tell the location is mocked. Some banking, payment, ride and delivery apps and some games refuse mock locations.
+- It does not change IP-based location. Websites can still estimate your city from your IP address; that needs a VPN.
+- Faking your location can break the terms of service of other apps. Use it for testing, development and privacy.
+
+## Build from source
+
+Requires Android Studio (or JDK 17+ and the Android SDK with platform 37).
+
+```
+./gradlew assembleDebug
+```
+
+The APK is written to `app/build/outputs/apk/debug/app-debug.apk`.
+
+## How it works
+
+- `MockLocationEngine` registers test providers for GPS and network through `LocationManager`, and turns on mock mode for the fused location provider.
+- `MockLocationService` is a foreground service that pushes the chosen coordinates once a second.
+- `MainActivity` is the Compose UI with an OpenStreetMap map (osmdroid).
+
+Map data © OpenStreetMap contributors.
