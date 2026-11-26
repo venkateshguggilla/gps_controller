@@ -11,8 +11,17 @@ android {
         applicationId = "com.venky.gpscontroller"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2"
+        versionCode = 3
+        versionName = "0.3"
+    }
+
+    buildTypes {
+        // Signed with the local debug key so new builds can be installed over the copy
+        // preinstalled on JakshyaOS.
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("debug")
+        }
     }
 
     compileOptions {

@@ -560,6 +560,8 @@ private class RouteOverlay(density: Float) : Overlay() {
 }
 
 private fun isMockLocationApp(context: Context): Boolean {
+    // On JakshyaOS the OS trusts the preinstalled app; there is nothing to set up.
+    if (isSystemApp(context)) return true
     val ops = context.getSystemService(AppOpsManager::class.java)
     return runCatching {
         val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

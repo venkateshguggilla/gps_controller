@@ -17,7 +17,7 @@ It needs no root. It uses Android's official mock location feature, so it must b
 
 Requires Android 8.0 (API 26) or newer.
 
-1. Download [`apk/GpsController-0.2-debug.apk`](apk/GpsController-0.2-debug.apk) to your phone.
+1. Download [`apk/GpsController-0.3-debug.apk`](apk/GpsController-0.3-debug.apk) to your phone.
 2. Open the file and allow installing from this source when Android asks.
 
 ## One-time setup
@@ -53,6 +53,16 @@ The route runs in straight lines between your points; it does not follow roads. 
 4. Drag the **move** bar to reposition the joystick. Tap **Joystick** again in the app to hide it.
 
 While a route is running, the joystick takes over when you hold it and the route carries on when you let go.
+
+## JakshyaOS (system mode)
+
+On [JakshyaOS](https://github.com/venkateshguggilla/JakshyaOS) the app is preinstalled and the OS trusts it, so it works without root and without Developer options:
+
+- No one-time setup: the app can set the location as soon as it is opened.
+- The OS does not flag its locations as mock, so other apps see them as ordinary GPS and network locations.
+- The app leaves Google's fused provider alone there (Play services always flags its own mock locations) and lets it follow the GPS and network providers.
+
+This needs the JakshyaOS location-service patch and the `ro.jakshya.mock_location_package` property; on any other OS the app behaves as described above. The system-image copy is the release build (`./gradlew assembleRelease`).
 
 ## Limits
 
